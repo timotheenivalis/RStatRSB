@@ -1,0 +1,159 @@
+---
+title: "Variance structure"
+author: "Timothee Bonnet"
+date: "7 May 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(lmerTest)
+library(ggplot2)
+```
+
+**Take-home:**
+
+* Not accounting for structure in the response variable can hide the true relationship between two variables
+* Not accounting for structure in the response variable will make your models underestimate uncertainty. 
+* Use random effects to efficiently capture variation due to grouping factors and get better parameter estimates and more correct standard errors and p-values.
+
+## Thorns and Simpson paradox
+
+Imagine you have measured how much a plant species is attacked by big herbivores as a function of how many thorns the plant grows on stems. You have collected data in 5 locations and visualise the relationship between herbivory and quantity of thorns
+
+```{r}
+thorndata <- read.csv("data/thorndata.csv")
+str(thorndata)
+
+ggplot(aes(x=thorndensity, y= herbivory), data = thorndata) +  geom_point()+
+  geom_smooth(method = "lm")
+
+m0 <- lm(thorndensity ~ herbivory, data=thorndata)
+summary(m0)
+
+plot(m0)
+library(performance)
+
+check_model(m0)
+
+```
+Model checks suggest some major unexplained structure in the data. It is likely due to site, which we have not included in our model.
+
+Let's visualize the data with colors related to site:
+```{r}
+ggplot(aes(x=thorndensity, y= herbivory, color=site), data = thorndata) +  geom_point()+
+  geom_smooth(method = "lm")
+```
+Indeed, site is a major source of variation.
+
+
+A model that account for site changes the direction of the effect of thorndensity:
+```{r}
+m1 <- lm( herbivory  ~thorndensity+ as.factor(site), data=thorndata)
+summary(m1)
+anova(m1)
+
+```
+
+If we want to visualize what the model m1 predicts in ggplot, we need some more coding:
+```{r}
+predlm <- predict(m1, interval = "confidence")
+datlm = cbind(thorndata, predlm)
+
+predlm <- predict(m1, interval = "confidence")
+datalm <- cbind(thorndata, predlm)
+head(datalm)
+ggplot(datalm, aes(x=thorndensity, y=herbivory, color=site)) +
+  geom_point() + geom_line(aes(y=fit), size=2, alpha=0.9) +
+  geom_ribbon(aes(ymin=lwr, ymax=upr, fill=site), alpha=0.1)
+
+check_model(m1)
+
+```
+
+The default model used by ggplot corresponds to a different question: does the relationship herbivory/thorndensity varies among sites?
+```{r}
+ggplot(aes(x=thorndensity, y= herbivory, color=site), data = thorndata) +  geom_point()+
+  geom_smooth(method = "lm")
+
+m2 <- lm(herbivory ~ thorndensity * as.factor(site), data=thorndata)
+summary(m2)
+anova(m2)
+
+check_model(m2)
+
+```
+It seems like there is some sign of variation in the effect of thorndensity among sites, but it is not clear. The model with interaction is not necessary if we just want to know what is the effect of thorndensity on herbivory on average. (so, m1 is better given our question.)
+
+### Random effect re-fit
+
+```{r}
+library(lmerTest)
+mm1 <- lmer(thorndensity ~ herbivory + (1|site), data=thorndata)
+summary(mm1)
+```
+
+
+Why random effect?
+
+Fixed or random effect?
+
+* First, if the predictor is a numerical variable (like size, temperature, number of species\dots) you will generally want a fixed effect, because the order and distance between values is likely meaningful. A random effect consider values as random "names" for grouping levels.
+* In general it does not change inference much. Random effects are slightly more efficient because the differences between grouping levels are assumed to come from a normal distribution, instead of being estimated independently from each other. 
+* A slightly lame but practical reason to use random effects: models output are cleaner with random effects because you get a single parameter estimate for a grouping variable modeled as a random effect, instead of a parameter estimate for each level of the grouping variable when modeled with a fixed effect.
+* Using a random effect instead of a fixed effect shifts the focus from the effect of each grouping level to variation among grouping levels. What is more interesting to you?
+* Often we use random effect to "correct" for some structure in the data that is not of interest. But random variance parameters can be of interest in themselves. For instance they can quantify genetic variation, individual repeatability, niche specialisation\dots if a variance parameter is of interest then estimate it using a random effect.
+* On the other hand, if you are very interested in how different a particular grouping level is from other levels, use fixed effects.
+* Be careful with random effects if the number of grouping levels is small. You definitely need at least 3, probably at least 5, maybe at least 10\dots With few grouping levels the fitting algorithm could have difficulties estimating the random variance, leading to unstable results (you may get different results from different algorithms) or the random variance being estimated to exactly zero.
+
+
+## Drought data.
+
+Our previous models were over-confident, because they failed to acknowledge that there were multiple measurements taken on the same plants. Therefore, the residuals were non-independent.
+
+```{r}
+drought_data <- read.csv("data/droughtdata.csv")
+
+ggplot(drought_data, aes(x=interaction(Genotype, WaterCondition),
+y=Temperature, color=as.factor(plant)))+ geom_point()+xlab("Genotype-by-exposure")
+
+
+mint <- lmer(Temperature ~ 1 + Genotype*WaterCondition + (1|plant), data = drought_data)
+
+summary(mint)
+anova(mint)
+```
+
+Now the result of an interaction genotype-by-water appears unclear. It seems possible that the result is entirelly due to having used two atypical plants for a given treatment. We should repeat the experiment with more plants!
+
+
+## Practice: Random effect and interaction with one continuous variables
+
+Last time we saw there was clear interaction Age-by-Sex for Escape distance in the kangaroo data set.
+```{r}
+roo <- read.csv("data/roo.csv")
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance, color=Age)) + 
+  geom_point() + geom_smooth(method = "lm")
+
+summary(lm(EscapeDistance ~ Age*Sex, data = roo))
+```
+
+However, all data points were not collected independently of each others. We measured individuals multiple times and we repeated the experiment on multiple years. 
+
+Transform this model into a mixed model with id and year as random effects. Does that change the parameter estimates and Std. Error?
+
+```{r}
+
+m1 <- lmer(EscapeDistance ~ Sex*Age + (1|id) + (1|Year), data = roo)
+summary(m1)
+anova(m1)
+
+```
+
+The results do not change dramatically, but parameters estimate change a bit and the uncertainty in the parameter estimates increases (larger standard errors and p-values).

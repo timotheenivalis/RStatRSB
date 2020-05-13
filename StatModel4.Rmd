@@ -1,0 +1,333 @@
+---
+title: "Mixed models 2"
+author: "Timothee Bonnet"
+date: "13 May 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Today we learn:**
+
+* Interpreting and visualizing mixed-effect models
+* Measuring the uncertainty in a random effect parameter
+* (Should you treat "Year" as a fixed or random effect?)
+
+Load packages for today:
+
+```{r}
+library(lmerTest)
+library(ggplot2)
+```
+
+
+Load data:
+
+```{r}
+download.file("https://timotheenivalis.github.io/data/thorndata.csv", 
+              destfile = "data/thorndata.csv")
+
+download.file("https://timotheenivalis.github.io/data/droughtdata.csv", 
+                        destfile = "data/droughtdata.csv")
+
+download.file("https://timotheenivalis.github.io/data/roo.csv", 
+                        destfile = "data/roo.csv")
+
+download.file("https://timotheenivalis.github.io/data/storks.csv", 
+                        destfile = "data/storks.csv")
+
+```
+
+## Visualize
+
+We model the relationship EscapeDistance / Tail_Length. 
+```{r}
+roo <- read.csv("data/roo.csv")
+
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance)) + 
+  geom_point(aes(color=as.factor(Year)), alpha=0.5) + 
+  geom_smooth(method = "lm")
+
+
+mm0 <- lmer(EscapeDistance ~ Tail_Length + (1|Year), data = roo)
+summary(mm0)
+
+# Fixed effects:
+fixef(mm0)
+
+# Random deviations (a.k.a. "random predictions"):
+ranef(mm0)
+# Fixed effects plus random deviations:
+coef(mm0)
+
+#Random effect variance components
+as.numeric(VarCorr(mm0)) 
+```
+
+Visualize the year slope predictions:
+
+```{r}
+predlm <- as.data.frame(coef( mm0 )$Year)
+predlm$Year <- rownames(predlm)
+mainslope <- as.data.frame(t(fixef(mm0)))
+
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance)) + 
+  geom_point(aes(color=as.factor(Year)), alpha=0.5) + 
+  geom_smooth(method = "lm")+
+  geom_abline(inherit.aes = FALSE, 
+              data = predlm,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length, 
+                  color=as.factor(Year))) + 
+  geom_abline(inherit.aes = FALSE, 
+              data = mainslope,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length), size=2) 
+  
+
+
+```
+
+Visualize the distribution of year effects and where to expect new years:
+```{r}
+yeardeviations <- as.data.frame(ranef(mm0)$Year)
+yeardeviations$Year <- row.names(yeardeviations)
+
+ggplot(yeardeviations, aes(x=`(Intercept)`, color=Year)) + 
+  geom_vline(aes(xintercept=`(Intercept)`, color=Year), size=2)
+
+as.numeric(VarCorr(mm0))
+
+xgrid <- seq(-8,8, by = 0.01)
+randomdens <- dnorm(x = xgrid, mean = 0, sd = sqrt(as.numeric(VarCorr(mm0))))
+REdensity <- data.frame(xgrid=xgrid, randomdens=randomdens)
+
+ggplot(REdensity, aes(x=xgrid, y=randomdens)) + geom_line()+
+  geom_vline(data= yeardeviations,
+             aes(xintercept=`(Intercept)`, color=Year), size=2, alpha=0.5)
+```
+
+Visualize the projected range of observed and unobserved years around linear regression:
+```{r}
+
+Int_low95 <- fixef(mm0)["(Intercept)"] - 1.96 * sqrt(as.numeric(VarCorr(mm0)))
+Int_upp95 <- fixef(mm0)["(Intercept)"] + 1.96 * sqrt(as.numeric(VarCorr(mm0))) 
+
+Tail_Length <- seq(20,75, by = 1)
+
+
+intervalRE <- data.frame(Tail_Length=Tail_Length,
+                         low95 =  Int_low95 + fixef(mm0)["Tail_Length"]*Tail_Length,
+                         upp95 = Int_upp95 + fixef(mm0)["Tail_Length"]*Tail_Length)
+
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance)) + 
+  geom_point(aes(color=as.factor(Year)), alpha=0.5) + 
+  geom_abline(inherit.aes = FALSE, 
+              data = predlm,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length, 
+                  color=as.factor(Year))) + 
+  geom_abline(inherit.aes = FALSE, 
+              data = mainslope,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length), size=2) +
+  geom_ribbon(inherit.aes = FALSE,
+                data=intervalRE,
+                aes(x=Tail_Length,ymin=low95, ymax=upp95), alpha=0.3)
+
+# Adding residual variation for the year 2006:
+
+Int_low95 <- coef(mm0)$Year["2013", "(Intercept)"] - 1.96 * sigma(mm0)
+Int_upp95 <- coef(mm0)$Year["2013", "(Intercept)"] + 1.96 * sigma(mm0)
+
+Tail_Length <- seq(20,75, by = 1)
+
+intervalPrediction2013 <- data.frame(Tail_Length=Tail_Length,
+                         low95 =  Int_low95 + fixef(mm0)["Tail_Length"]*Tail_Length,
+                         upp95 = Int_upp95 + fixef(mm0)["Tail_Length"]*Tail_Length)
+
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance)) + 
+  geom_point(aes(color=as.factor(Year)), alpha=0.5) + 
+  geom_abline(inherit.aes = FALSE, 
+              data = predlm,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length, 
+                  color=as.factor(Year))) + 
+  geom_abline(inherit.aes = FALSE, 
+              data = mainslope,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length), size=2) +
+  geom_ribbon(inherit.aes = FALSE,
+                data=intervalRE,
+                aes(x=Tail_Length,ymin=low95, ymax=upp95), alpha=0.3)+
+  geom_ribbon(inherit.aes = FALSE,
+                data=intervalPrediction2013,
+                aes(x=Tail_Length,ymin=low95, ymax=upp95, fill="2013"), alpha=0.3)
+```
+
+
+Repeat the process for id, a random effect that captures far more variation:
+```{r}
+
+mmid <- lmer(EscapeDistance ~ Tail_Length + (1|id), data = roo)
+summary(mmid)
+
+
+Int_low95 <- fixef(mmid)["(Intercept)"] - 1.96 * sqrt(as.numeric(VarCorr(mmid)))
+Int_upp95 <- fixef(mmid)["(Intercept)"] + 1.96 * sqrt(as.numeric(VarCorr(mmid))) 
+
+Tail_Length <- seq(20,75, by = 1)
+
+intervalRE <- data.frame(Tail_Length=Tail_Length,
+                         low95 =  Int_low95 + fixef(mmid)["Tail_Length"]*Tail_Length,
+                         upp95 = Int_upp95 + fixef(mmid)["Tail_Length"]*Tail_Length)
+
+mainslope <- as.data.frame(t(fixef(mmid)))
+
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance)) + 
+  geom_point(aes(color=as.factor(Year)), alpha=0.5) + 
+  geom_abline(inherit.aes = FALSE, 
+              data = mainslope,
+              aes(intercept=`(Intercept)`,
+                  slope=Tail_Length), size=2) +
+  geom_ribbon(inherit.aes = FALSE,
+                data=intervalRE,
+                aes(x=Tail_Length,ymin=low95, ymax=upp95), alpha=0.3)
+```
+
+
+
+## Year as fixed or random effect?
+
+```{r, echo=FALSE}
+set.seed(123)
+year <- 1980:2020
+storks <- sapply(year-mean(year), function(x) rpois(n = 1, lambda = exp(0.2+0.1*x)))
+devbabies <-rnorm(n = length(year), sd = 1)
+
+method <- letters[1:10]
+
+data <- expand.grid(year=year, method=method)
+data$storks <-  sapply(data$year-mean(data$year), function(x) rpois(n = 1, lambda = exp(0.2+0.3*x))) + rep(1:length(method), each=length(year))
+data$babies <- round(1000 + data$year*0.1+rnorm(n = length(data$year)) + rep(devbabies, length(method))) + rnorm(n = length(data$year))
+
+keep <- as.logical(sapply(data$year-mean(year), function(x) rbinom(n = 1, size = 1, prob = plogis(0.1+0.3*x))))
+
+data <- data[keep,]
+nrow(data)
+table(data$year)
+write.csv(data, file = "data/storks.csv", row.names = FALSE, quote = FALSE)
+```
+
+Year as a fixed effect models a linear change in the response with years. This does not correct for the non-independence between data collected on a given year.
+```{r}
+summary(lm(babies ~ 1 + year, data = data))
+summary(lm(babies ~ 1 + storks, data = data))
+summary(lm(babies ~ 1 + storks +  year, data = data))
+```
+
+Year as a random effect models differences among years, without considering that years come in a specific order. The random effect correct the estimation of the fixed effect for non-independence between data collected on a give year. However, the random effect does not correct for linear changes in other fixed effects with time.
+```{r}
+summary(lmer(babies ~ 1 + (1|year), data = data))
+summary(lmer(babies ~ 1 + storks + (1|year), data = data))
+```
+
+Sometimes you need both.
+Year can be both a fixed and a random effect, meaning we want to model a linear change, and the dependence between data collected on the same years.
+```{r}
+summary(lmer(babies ~ 1 + storks +  year + (1|year) , data = data))
+```
+
+
+Try with the roo dataset:
+
+```{r}
+summary(lm(EscapeDistance ~ Tail_Length + Year , data = roo))
+```
+
+```{r}
+summary(lmer(EscapeDistance ~Tail_Length + (1|Year), data = roo))
+
+```
+
+```{r}
+summary(lmer(EscapeDistance ~Tail_Length + Year + (1|Year), data = roo))
+```
+
+
+
+
+More than one parameter:
+```{r}
+ggplot(roo, aes(x=Tail_Length, y=EscapeDistance, color=Age)) + 
+  geom_point() + geom_smooth(method = "lm")
+
+summary(lm(EscapeDistance ~ Age*Sex, data = roo))
+summary(mm0 <- lmer(EscapeDistance ~ Age*Sex + (1|Year), data = roo))
+
+
+ranef(mm0)
+coef(mm0)
+```
+
+
+
+
+<!-- ```{r} -->
+<!-- # value for Adult, when Tail_Length=0 -->
+<!-- coef(mInt1)[1] -->
+
+<!-- # value for Adult when Tail_Length=30 or 50 -->
+<!-- coef(mInt1)[1] + 30 * coef(mInt1)[2]  -->
+<!-- coef(mInt1)[1] + 50 * coef(mInt1)[2]  -->
+
+<!-- # value for Juvenile when Tail_Length=0 -->
+<!-- coef(mInt1)[1] + coef(mInt1)[3]  -->
+
+<!-- # value for Juvenile when Tail_Length=30 or 50 -->
+<!-- coef(mInt1)[1] + coef(mInt1)[3] + 30*(coef(mInt1)[2] + coef(mInt1)[4])   -->
+<!-- coef(mInt1)[1] + coef(mInt1)[3] + 50*(coef(mInt1)[2] + coef(mInt1)[4])   -->
+
+<!-- ``` -->
+
+<!-- ## Interaction between two continuous variables -->
+
+<!-- ```{r} -->
+<!-- ggplot(roo, aes(x=Tail_Length, y=EscapeDistance, color=Date)) +  -->
+<!--   geom_point() + geom_smooth(method = "lm", data = roo [roo$Date > 250,], -->
+<!--         aes(x=Tail_Length, y=EscapeDistance, color=Date), inherit.aes = FALSE, color="red") + -->
+<!-- geom_smooth(method = "lm", data = roo [roo$Date > 200 & roo$Date<=250,], -->
+<!--                    aes(x=Tail_Length, y=EscapeDistance, color=Date), inherit.aes = FALSE, color="orange") + -->
+<!-- geom_smooth(method = "lm", data = roo [roo$Date<=200,], -->
+<!--                    aes(x=Tail_Length, y=EscapeDistance, color=Date), inherit.aes = FALSE, , color="yellow") -->
+
+<!-- mInt2 <- lm(EscapeDistance ~ Tail_Length*Date, data=roo) -->
+<!-- summary(mInt2) -->
+<!-- anova(mInt2) -->
+<!-- ``` -->
+
+<!-- ## elements of lme4 -->
+
+<!-- ## Uncertainty and tests in lme4 -->
+
+
+<!-- ## Gapminder exercises -->
+
+<!-- ```{r} -->
+<!-- # download.file(url = "https://timotheenivalis.github.io/data/gapminder_data.csv", -->
+<!-- #               destfile = "gapminder.csv") -->
+<!-- gapminder <- read.csv(file = "gapminder.csv") -->
+<!-- str(gapminder) -->
+<!-- ``` -->
+
+<!-- Is gdpPercap influenced by lifeExp? On average for all continent?  -->
+<!-- Is the relationship different among continents? -->
+
+
+
+
+

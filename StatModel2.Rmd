@@ -1,0 +1,272 @@
+---
+title: "Linear models, interpretation, prediction, additive effects, interactions"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(ggplot2)
+library(performance)
+library(emmeans)
+library(plyr)
+```
+
+Goals for today:
+
+* Understand the ouput of lm(), summary(lm()), anova(lm()), emmeans(lm())
+* Be able to plot model predictions from lm()
+* Understand the difference between additive and full-factorial models, choose the appropriate model for your question, and interpret the results correctly
+
+## Practice with lm() and associated functions
+
+### Practice fit and prediction with drought data
+
+```{r}
+# download.file("https://timotheenivalis.github.io/data/droughtdata.csv", 
+#              destfile = "data/droughtdata.csv")
+
+drought_data <- read.csv("data/droughtdata.csv")
+str(drought_data)
+wt_data <- drought_data[drought_data$Genotype=="WT",]
+
+str(drought_data)
+mutant_data <- drought_data[drought_data$Genotype=="mutant",]
+
+mmut <- lm(Temperature ~ WaterCondition, data = mutant_data)
+summary(mmut)
+
+```
+
+```{r}
+ggplot(mutant_data, aes(x=WaterCondition, y=Temperature)) + 
+  geom_violin() + geom_jitter()
+
+```
+
+Visualize confidence interval:
+
+```{r}
+pred <- c(coefficients(mmut)[1]+coefficients(mmut)[2], coefficients(mmut)[1])
+
+confpred <- as.data.frame(emmeans(mmut, ~WaterCondition))
+
+ggplot(mutant_data, aes(x=WaterCondition, y=Temperature)) + 
+  geom_violin() + geom_jitter() + 
+  geom_point(data = confpred, mapping = aes(x=WaterCondition, y=emmean), inherit.aes = FALSE, size=10, color="red") +
+  geom_errorbar(data = confpred, aes(x=WaterCondition, ymin=lower.CL, ymax =upper.CL), inherit.aes = FALSE, color="blue")
+
+
+```
+
+What does that mean?
+
+Visualize prediction interval:
+
+```{r}
+confpred <- as.data.frame(emmeans(mmut, ~WaterCondition))
+
+confpred$lower.PI <- confpred$emmean - 1.96*sigma(mmut)
+confpred$upper.PI <- confpred$emmean + 1.96*sigma(mmut)
+
+
+ggplot(mutant_data, aes(x=WaterCondition, y=Temperature)) + 
+  geom_violin() + geom_jitter() + 
+  geom_point(data = confpred, mapping = aes(x=WaterCondition, y=emmean), inherit.aes = FALSE, size=10, color="red") +
+  geom_errorbar(data = confpred, aes(x=WaterCondition, ymin=lower.CL, ymax =upper.CL), inherit.aes = FALSE, color="blue", width=0.2)+
+  geom_errorbar(data = confpred, aes(x=WaterCondition, ymin=lower.PI, ymax = upper.PI), inherit.aes = FALSE, color="red", width= 0.5) 
+
+
+```
+
+Not too bad. Although the variation seems over-estimated in the Normal water condition, and possibly underestimated in the Drought water condition. However, given the sample size it is not really concerning.
+
+We can repeat the procedure for the wild type data:
+```{r}
+wt_data <- drought_data[drought_data$Genotype=="WT",]
+mwt <- lm(Temperature ~ WaterCondition, data = wt_data)
+summary(mwt)
+
+preddf <- data.frame(WaterCondition = unique(mutant_data$WaterCondition),
+           prediction = pred)
+
+confpred <- as.data.frame(emmeans(mwt, ~WaterCondition))
+
+confpred$lower.PI <- confpred$emmean - 1.96*sigma(mwt)
+confpred$upper.PI <- confpred$emmean + 1.96*sigma(mwt)
+
+ggplot(wt_data, aes(x=WaterCondition, y=Temperature)) + 
+  geom_violin() + geom_jitter() + 
+  geom_point(data = confpred, mapping = aes(x=WaterCondition, y=emmean), inherit.aes = FALSE, size=10, color="red") +
+  geom_errorbar(data = confpred, aes(x=WaterCondition, ymin=lower.PI, ymax = upper.PI), inherit.aes = FALSE, color="red", width= 0.5) + 
+geom_errorbar(data = confpred, aes(x=WaterCondition, ymin=lower.CL, ymax = upper.CL), inherit.aes = FALSE, color="blue", width= 0.2)
+
+```
+
+### Practice with the full data set
+
+```{r}
+mall <- lm(Temperature ~ WaterCondition + Genotype, data = drought_data)
+summary(mall)
+
+confpred <- as.data.frame(emmeans(mall, ~ WaterCondition + Genotype))
+confpred$lower.PI <- confpred$emmean - 1.96*sigma(mall)
+confpred$upper.PI <- confpred$emmean + 1.96*sigma(mall)
+```
+
+```{r}
+ggplot(drought_data, aes(x=interaction(WaterCondition,Genotype), y=Temperature)) + 
+  geom_violin() + geom_jitter() +
+   geom_point(data = confpred, mapping = aes(x=interaction(WaterCondition,Genotype), y=emmean), inherit.aes = FALSE, size=10, color="red") +
+    geom_errorbar(data = confpred, aes(x=interaction(WaterCondition,Genotype), ymin=lower.PI, ymax = upper.PI), inherit.aes = FALSE, color="red", width= 0.5)+ 
+geom_errorbar(data = confpred, aes(x=interaction(WaterCondition,Genotype), ymin=lower.CL, ymax = upper.CL), inherit.aes = FALSE, color="blue", width= 0.2)
+```
+
+It looks wrong! Not necessarily, it depends what we want to estimate.
+
+## Additive and interactive (full factorial) models
+
+Here, the question that led to the experiment was: does the mutant deal better with drought than the wild type?
+In other words: 
+
+```{r}
+mallinter <- lm(Temperature ~ WaterCondition * Genotype, data = drought_data)
+
+confpred <- as.data.frame(emmeans(mallinter, ~ WaterCondition * Genotype))
+confpred$lower.PI <- confpred$emmean - 1.96*sigma(mall)
+confpred$upper.PI <- confpred$emmean + 1.96*sigma(mall)
+```
+
+```{r}
+ggplot(drought_data, aes(x=interaction(WaterCondition,Genotype), y=Temperature)) + 
+  geom_violin() + geom_jitter() +
+   geom_point(data = confpred, mapping = aes(x=interaction(WaterCondition,Genotype), y=emmean), inherit.aes = FALSE, size=10, color="red") +
+    geom_errorbar(data = confpred, aes(x=interaction(WaterCondition,Genotype), ymin=lower.PI, ymax = upper.PI), inherit.aes = FALSE, color="red", width= 0.5)+ 
+geom_errorbar(data = confpred, aes(x=interaction(WaterCondition,Genotype), ymin=lower.CL, ymax = upper.CL), inherit.aes = FALSE, color="blue", width= 0.2)
+```
+
+Now we know this model fits the data well, let's try to understand why based on the summary:
+
+```{r}
+summary(mallinter)
+
+# Water Drought, Genotype Mutant
+coef(mallinter)["(Intercept)"]
+
+# Water Normal, Genotype Mutant
+coef(mallinter)["(Intercept)"] + coef(mallinter)["WaterConditionNormal"]
+
+# Water Drought, Genotype WT
+coef(mallinter)["(Intercept)"] + coef(mallinter)["GenotypeWT"]
+
+# Water Normal, Genotype WT
+
+coef(mallinter)["(Intercept)"] + coef(mallinter)["GenotypeWT"]+ coef(mallinter)["WaterConditionNormal"]  ## WRONG
+
+coef(mallinter)["(Intercept)"] + coef(mallinter)["GenotypeWT"]+ coef(mallinter)["WaterConditionNormal"] + coef(mallinter)["WaterConditionNormal:GenotypeWT"] ## RIGHT
+
+```
+
+Draw transitions with a pencil.
+
+### What question did we want to ask?
+
+* Are we trying to build a predictive model?
+* Are we interested in average effects?
+* Are we interested in differences in differences? 
+
+```{r}
+summary(mallinter)
+anova(mallinter)
+```
+
+
+Why not to just do two tests and see that one is significant and the other not?
+Many cases where differences in p-values is unrelated to differences in differences. Differences in sample sizes or variability can generate differences in p-values for a predictor although effects are the same across other predictors.
+
+Below is an example of a difference in p-value giving the wrong impression that differences are different, while they are not. You don't need to worry about what the code does exactly. Just know it simulates data with an effect of the variable x, and that this effect is the same in both populations (pop). The sample size is very different among populations though.
+
+```{r}
+set.seed(1859)
+mean1 <- 0
+mean2 <- 0.15
+
+samp1 <- 8
+samp2 <- 1000
+
+sdall <- 3
+
+dat <- data.frame(y = c(rnorm(n = samp1, mean = mean1, sd = sdall),
+                rnorm(n = samp1, mean = mean2, sd = sdall),
+                rnorm(n = samp2, mean = mean1, sd = sdall),
+                rnorm(n = samp2, mean = mean2, sd = sdall)),
+           x = c(rep("A", times=samp1), 
+                 rep("B", times=samp1),
+                 rep("A", times=samp2),
+                 rep("B", times=samp2)),
+           pop = c(rep("p1", times=2*samp1), 
+                   rep("p2", times=2*samp2))
+            )
+```
+
+If we fit models separately for populations 1 and 2, we get one significant result and the other non-significant:
+```{r}
+
+summary(lm(y ~ x ,  data = dat[dat$pop=="p1",]))
+summary(lm(y ~ x ,  data = dat[dat$pop=="p2",]))
+```
+
+That's just an artefact of sample size though. 
+
+If we fit a single model with an interaction, we realize that there is no clear evidence that the differences among x are different among populations:
+```{r}
+summary(mtot <- lm(y ~ x*pop ,  data = dat))
+anova(mtot)
+```
+
+
+### Practice with factors
+```{r, echo=FALSE, eval=FALSE}
+download.file("https://timotheenivalis.github.io/data/roo.csv",
+              destfile = "data/roo.csv")
+
+roo <- read.csv("data/roo.csv")
+roo$Age <- c("Adult", "Young")[(roo$Age==0) +1]
+roo <- na.omit(roo)
+str(roo)
+write.csv(roo, file = "data/roo.csv", quote = FALSE, row.names = FALSE)
+```
+
+Kangaroos behavioural data: At what distance do individuals hop-away when you approach them?
+
+We know Age has a strong effect on EscapeDistance. We wonder whether the effect is the same for both males and females.
+
+```{r}
+roo <- read.csv("data/roo.csv")
+
+summary(lm(EscapeDistance ~ 1 + Sex, data = roo))
+summary(lm(EscapeDistance ~ 1 + Age, data = roo))
+summary(lm(EscapeDistance ~ 1 + Age*Sex, data = roo))
+
+ggplot(roo, aes(x=interaction(Sex, Age), y=EscapeDistance)) + geom_violin()
+```
+
+So we have good evidence that the age differences are different in males and females; or equivalently, the sex differences are different in young and adults.
+
+Now, let's say you want to estimate **the effect of sex on average**. You know that years where quite different sex ration through years. So you would like to control for year, as a factor.
+Which model do you fit?
+
+An additive model ?
+```{r}
+summary(lm(EscapeDistance ~ 1 + Sex + as.factor(Year), data = roo))
+```
+
+Or an interactive model?
+```{r}
+summary(mx <- lm(EscapeDistance ~ 1 + Sex * as.factor(Year), data = roo))
+```
+
