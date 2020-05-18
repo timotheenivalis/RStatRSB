@@ -259,20 +259,35 @@ summary(lmer(EscapeDistance ~Tail_Length + Year + (1|Year), data = roo))
 ```
 
 
+## Uncertainty in random effects
 
+Lme4 summary does not show any measure of uncertainty in random effect variances. How do we know whether a random effect is statistically significant, or what range of values are likely?
 
-More than one parameter:
+You can test a random effect using a Likelihood Ratio Test that compares a model with and without the random effect. **The models need to be nested, which means one model is a subset of the other one**.
 ```{r}
-ggplot(roo, aes(x=Tail_Length, y=EscapeDistance, color=Age)) + 
-  geom_point() + geom_smooth(method = "lm")
-
-summary(lm(EscapeDistance ~ Age*Sex, data = roo))
-summary(mm0 <- lmer(EscapeDistance ~ Age*Sex + (1|Year), data = roo))
-
-
-ranef(mm0)
-coef(mm0)
+mm0 <- lmer(EscapeDistance ~ Age*Sex + (1|Year), data = roo)
+m0 <- lm(EscapeDistance ~ Age*Sex, data = roo)
+anova(mm0, m0)
 ```
+
+
+```{r}
+mm1 <- lmer(EscapeDistance ~ Age*Sex + (1|Year) + (1|id), data = roo)
+mm2 <- lmer(EscapeDistance ~ Age*Sex + (1|Year), data = roo)
+mm3 <- lmer(EscapeDistance ~ Age*Sex + (1|id), data = roo)
+anova(mm1, mm2)
+anova(mm1,mm3)
+```
+
+Estimate confidence intervals of standard deviation parameters:
+
+```{r}
+confint(mm1)
+```
+.sig01 is the standard deviation for the first random effect, .sig02 for the second random effect, .sigma for the residual standard deviation. 
+
+What about uncertainty in the random level predictions produced by ranef() ?
+You can't with lme4, and it is very difficult in general with maximum likelihood methods. You need to go Bayesian (for instance with MCMCglmm), but we won't cover that here.
 
 
 
