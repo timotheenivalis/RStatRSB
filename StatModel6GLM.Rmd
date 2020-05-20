@@ -1,0 +1,271 @@
+---
+title: 'GLM 2: count data'
+author: "Timothee Bonnet"
+date: "20 May 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Today:
+
+* Fit generalized linear models for count data
+* Predict and visualise model output
+* Understand issues of over-dispersion and how to address them
+
+Packages:
+```{r}
+library(ggplot2)
+library(performance)
+library(DHARMa)
+library(glmmTMB)
+```
+
+
+
+## Count data properties
+
+Ideal count data produced by "Poisson" process. The Poisson distribution has a single parameter: the expected count, lambda.
+```{r}
+randomcount <- rpois(n = 10000, lambda = 3.2)
+
+mean(randomcount)
+var(randomcount)
+range(randomcount)
+
+summary(randomcount)
+
+randomcount <- rpois(n = 10000, lambda = 10.8)
+
+mean(randomcount)
+var(randomcount)
+range(randomcount)
+
+summary(randomcount)
+
+ggplot(data.frame(x=randomcount), aes(x=x))+
+  geom_histogram(binwidth = 0.5,aes(y=stat(count) / sum(count)))
+```
+
+The mean of a true Poisson variable equals its variance. 
+More in general in count variables that are not perfect Poisson, the variance is a function of the mean.
+
+```{r}
+x <- seq(from = 1, to=10, by=1)
+
+dat <- data.frame(x= rep(x, each=1000),
+                  y=as.vector(sapply(x, function(x) {rpois(n = 1000, lambda = x)})))
+
+ggplot(dat, aes(x=as.factor(x), y=y)) + geom_boxplot()
+```
+
+
+## Fitting count data GLMs in R
+
+The three components of a glm:
+
+1. A linear model: response = intercept + predictor*slope ...
+2. A link function between the scale of the data (positive intergers) and the scale of the linear model (-inf to +inf). For count data generally log().
+3. A random distribution linking expected data (on average 1.27) to actual data (0,1,2,3...). For count data, the Poisson distribution or other related distributions.
+
+
+
+
+The simplest solution is:
+
+```{r, eval=FALSE}
+glm(obs ~ 1 + x , family = "poisson", data=data)
+```
+
+**However you should NEVER** use this.
+glm( family="poisson") assumes there is no unexplained variation apart from the incompressible Poisson random process, that is, there is no unexplained variation in expected counts, or $V(\mathrm{exp}(Y)) = E(\mathrm{exp}(Y))$.
+This is almost never the case with biological data. Most of the time there is lots of unexplained variance and are over-dispersed. On the other hand, some biological processes are "conservative"/under-dispersed and have $V(\mathrm{exp}(y)) < E(\mathrm{exp}(y))$ (for instance bird clutch size within species).
+
+When you use simple Poisson glm on over-dispersed data you artificially decrease SE and p-value: you are going to find lots of false positive. When you use simple Poisson glm on under-dispersed data you artificially increase SE and p-value: you loose statistical power.
+
+There are at least three options to obtain proper inference/prediction with count data:
+
+* Use quasi-likelihood methods with approximate correction of uncertainty. That is available as glm(family="quasipoisson")
+* Use multiplicative dispersal model such as negative-binomial.
+* If the data are assumed to be over-dispersed conditional on predictors, use an "observation-level random effect"; that's equivalent to adding a residual to the Poisson model.
+
+
+## Practice
+
+1. Load the data reproduction.csv
+```{r}
+repro <- read.csv("data/reproduction.csv")
+
+ # set.seed(1234)
+ # repro$size <- 1+abs(1+ rnorm(n=nrow(repro), mean = 2, sd = 2))
+ # repro$reproduction <- sapply(exp(0.2+0.3*(repro$size-4) + 0.2*repro$sex + rnorm(nrow(repro),0,sd=1.2)),
+ #        function(x) rpois(n = 1, lambda = x))
+ # 
+ # ggplot(repro, aes(x=size, y=reproduction)) +
+ #   geom_point()+ geom_smooth(method="lm")
+
+write.csv(repro, file = "data/reproduction.csv", row.names = FALSE, quote = FALSE)
+str(repro)
+summary(repro)
+```
+
+2. Plot reproduction data, calculate the mean and variance in reproduction.
+```{r}
+mean(repro$reproduction)
+var(repro$reproduction)
+
+ggplot(repro, aes(x=reproduction)) + geom_density()
+```
+
+The variance is larger than the mean; data are currently over-dispersed (although it is possible that data are not over-dispersed conditional on predictors.)
+
+3. Overlay a Gaussian distribution of same mean and variance, does it fit?
+```{r}
+normdens <- data.frame(x=seq(-10,max(repro$reproduction), by = 0.1), 
+                       y=dnorm(x=seq(-10, max(repro$reproduction), by = 0.1),
+                  mean = mean(repro$reproduction),
+                  sd = sd(repro$reproduction)))
+
+ggplot(repro, aes(x=reproduction)) + geom_histogram(aes(y=stat(count) / sum(count))) +
+  geom_line(data=normdens, aes(x = x, y=y), inherit.aes = FALSE, color="red")
+
+```
+
+4. Fit an compare a lm and a Poisson glm of reproduction on size
+```{r}
+lmrepro <- lm(reproduction ~ size, data=repro)
+
+glmrepro <- glm(reproduction ~ size, data = repro, family = "quasipoisson")
+
+ggplot(repro, aes(x=size, y=reproduction)) + geom_point()+
+  geom_smooth(method="lm",fullrange=TRUE, color="orange", fill="orange", alpha=0.2) +
+  geom_smooth(method="glm", method.args=list(family="poisson"), color="red", fill="red", fullrange=TRUE, alpha=0.2) +
+  geom_smooth(method="glm", method.args=list(family="quasipoisson"), color="blue", fill="blue", fullrange=TRUE, alpha=0.2) +
+  ylim(c(-1,30)) + xlim(c(0,max(repro$size)))
+
+
+```
+
+
+5. Check the diagnostic plots for both models. Should you be worried?
+```{r}
+plot(lmrepro)
+check_model(lmrepro)
+plot(lmrepro)
+check_model(glmrepro)
+```
+
+No worries. GLMs have different assumptions than lm(). Plots for glm generally look weird even if everything is good.
+
+6. Extract and visualize a model prediction from both models (use the function
+predict, and/or do it by hand to practice link-function back-transformation)
+
+```{r}
+sizex <- seq(from=0, to=10, by=0.1)
+reprolatent <- coef(glmrepro)[1] + sizex*coef(glmrepro)[2]
+#equivalent to:
+predict(glmrepro, type = "link", newdata = data.frame(size=sizex))
+
+pred1 <- data.frame(sizex=sizex, reprolatent=reprolatent)
+
+ggplot(repro, aes(x=size, y=reproduction)) + geom_point() + 
+  geom_line(data = pred1, aes(x=sizex, y=reprolatent), color="red")
+
+pred1$reprodata <- exp(pred1$reprolatent)
+#equivalent to:
+predict(glmrepro, type = "response", newdata = data.frame(size=sizex))
+
+
+ggplot(repro, aes(x=size, y=reproduction)) + geom_point() + 
+  geom_line(data = pred1, aes(x=sizex, y=reprolatent), color="red")+
+  geom_line(data = pred1, aes(x=sizex, y=reprodata), color="blue")
+
+```
+
+
+7. Before GLMs, researchers used to log-transform the data and fit linear models.
+What are the problems with this approach?
+
+```{r, eval=FALSE}
+summary(lm(log(reproduction) ~ size, data=repro))
+
+summary(lm(log(reproduction+1) ~ size, data=repro))
+
+summary(lm(log(reproduction+0.1) ~ size, data=repro))
+
+summary(lm(log(reproduction+0.001) ~ size, data=repro))
+
+summary(lm(log(reproduction+0.000000000000000001) ~ size, data=repro))
+
+#let's extract the slope parameter for smaller and smaller deviations from zero
+
+sapply(X = 1:30, function(x){
+  coef(lm(log(reproduction+10^(-x)) ~ size, data=repro))[2]
+  }
+  )
+
+```
+
+You cannot take the log of zero. The value of the slope is dependent on the arbitrary choice of a small deviation from zero.
+
+
+### Factorial model
+
+```{r}
+glmreprosex <- glm(reproduction ~ sex, data = repro, family = "quasipoisson")
+summary(glmreprosex)
+
+exp(coef(glmreprosex)[2])
+
+mean(repro$reproduction[repro$sex==1])/mean(repro$reproduction[repro$sex==0])
+
+
+mean(repro$reproduction[repro$sex==0]) * exp(coef(glmreprosex)[2])
+```
+
+Does it work with the continuous scale of our previous model?
+
+
+```{r}
+predictedmeanat0 <- exp(coef(glmrepro)[1])
+predictedmeanat1 <- exp(coef(glmrepro)[1] + coef(glmrepro)[2])
+
+predictedmeanat1/predictedmeanat0
+exp(coef(glmrepro)[2])
+```
+
+
+## Practice 2
+
+```{r}
+voles <- read.csv("data/voles.csv")
+summary(voles)
+```
+
+
+## Over-dispersion as a random effect
+
+```{r}
+glmreprosex <- glm(reproduction ~ sex + size, data = repro, family = "quasipoisson")
+summary(glmreprosex)
+
+mreproWRONG <- glmmTMB(reproduction ~ sex +size, data = repro, family = "poisson")
+summary(mreproWRONG)
+
+repro$row <- 1:nrow(repro)
+mrepro2 <- glmmTMB(reproduction ~ sex +size + (1|row), data = repro, family = "poisson")
+summary(mrepro2)
+
+#similar to :
+mrepro3 <- glmmTMB(reproduction ~ sex +size , data = repro, family = "nbinom1")
+summary(mrepro3)
+
+
+mrepro4 <- glmmTMB(reproduction ~ sex +size + (1|row), data = repro, family = "nbinom2")
+summary(mrepro4)
+```
+
